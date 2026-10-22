@@ -1,0 +1,8 @@
+numpy
+scipy
+trimesh
+rtree
+pybullet
+scikit-learn
+matplotlib
+networkx

@@ -1,4 +1,4 @@
-"""Load the G2 with the default suction head (EVS08 on both arms; assets/robot, copied by tools/copy_robot.py) into PyBullet."""
+"""Load the G2 with the default suction head (EVS08 on both arms; assets/robot, copied by copy_robot.py) into PyBullet."""
 import json
 import os
 import re

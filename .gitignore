@@ -2,12 +2,11 @@
 .venv/
 __pycache__/
 *.pyc
-
-# Generated / copied assets (not published: CAD-derived meshes and the robot description; see README "Assets")
-assets/
 build/
+*.egg-info/
 
-# Grasp databases and run outputs (regenerate with build_grasp_db.py / tests / validate_in_sim.py)
-db/
-db_old_*/
-logs/
+# Example data that is not published (CAD-derived part meshes, robot description) and generated outputs
+examples/*/assets/
+examples/*/build/
+examples/*/db/
+examples/*/logs/

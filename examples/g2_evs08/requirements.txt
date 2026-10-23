@@ -1,0 +1,3 @@
+# the G2 example needs these on top of the repository's requirements.txt
+pybullet
+scikit-learn

@@ -1,0 +1,12 @@
+{
+  "name": "test_4cup",
+  "_comment": "Synthetic head for the tests: 4 cups (r 10 mm) in a 50 mm square, cups 30 mm long; body box 100 x 80 mm from 30 to 100 mm behind the lips; a side box (like a camera) on +y. Tool frame: lips at z = 0, +z = approach.",
+  "cups": [{"pos": [0.025, 0.025, 0], "radius": 0.01}, {"pos": [0.025, -0.025, 0], "radius": 0.01},
+           {"pos": [-0.025, -0.025, 0], "radius": 0.01}, {"pos": [-0.025, 0.025, 0], "radius": 0.01}],
+  "cup_height": 0.03,
+  "seal": {"rim_points": 16, "seal_tol": 0.0015, "reach": 0.005, "max_normal_deg": 30, "min_cups": 3},
+  "hold": {"vacuum_kpa": 60, "safety_g": 1.5},
+  "head": [{"type": "box", "lo": [-0.05, -0.04, -0.10], "hi": [0.05, 0.04, -0.03]},
+           {"type": "box", "lo": [-0.02, 0.04, -0.09], "hi": [0.02, 0.09, -0.05]}],
+  "turn_range_deg": 360
+}

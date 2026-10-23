@@ -1,0 +1,17 @@
+[project]
+name = "suction-grasps"
+version = "0.2.0"
+description = "Suction grasp database from CAD (phase 1) and grasp selection at execution time (phase 2)"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "trimesh", "rtree", "networkx", "python-fcl", "matplotlib"]
+
+[project.optional-dependencies]
+fast = ["embreex"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["suction_grasps"]

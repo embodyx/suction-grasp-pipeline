@@ -1,11 +1,9 @@
-"""Synthetic test parts built from boxes (metres). Each shape is a list of boxes (centre, size); as_mesh() joins
-them for the ray seal checker, as_obj() writes one convex object per box for the PyBullet collision checker."""
-import os
-
+"""Synthetic test parts built from boxes (metres). Each shape is a list of boxes (pose, size); as_mesh() joins them
+into one trimesh object (used by both the seal and the collision checks)."""
 import numpy as np
 import trimesh
 
-T_MM = 0.002               # plate thickness
+PLATE_T = 0.002            # m, plate thickness
 
 
 def box(centre, size, R=None):
@@ -18,7 +16,7 @@ def box(centre, size, R=None):
 
 def plate(half=0.10, top=0.0):
     """Square plate, top face at z = top."""
-    return [box([0, 0, top - T_MM / 2], [2 * half, 2 * half, T_MM])]
+    return [box([0, 0, top - PLATE_T / 2], [2 * half, 2 * half, PLATE_T])]
 
 
 def plate_with_holes(holes, hole=0.016, half=0.10):
@@ -32,13 +30,13 @@ def plate_with_holes(holes, hole=0.016, half=0.10):
         for y0, y1 in zip(ys[:-1], ys[1:]):
             if any(h[1] - hole / 2 <= y0 + 1e-9 and y1 <= h[1] + hole / 2 + 1e-9 for h in in_hole):
                 continue                              # this cell is a hole
-            out.append(box([(x0 + x1) / 2, (y0 + y1) / 2, -T_MM / 2], [x1 - x0, y1 - y0, T_MM]))
+            out.append(box([(x0 + x1) / 2, (y0 + y1) / 2, -PLATE_T / 2], [x1 - x0, y1 - y0, PLATE_T]))
     return out
 
 
 def plate_edge(edge_x, half=0.10):
     """Plate from x = -half to x = edge_x."""
-    return [box([(edge_x - half) / 2, 0, -T_MM / 2], [edge_x + half, 2 * half, T_MM])]
+    return [box([(edge_x - half) / 2, 0, -PLATE_T / 2], [edge_x + half, 2 * half, PLATE_T])]
 
 
 def with_nut(xy, size=0.021, height=0.007):
@@ -63,22 +61,16 @@ def as_mesh(boxes, transform=None):
     return m
 
 
-def as_obj(boxes, path):
-    lines, base = [], 1
-    for k, (T, s) in enumerate(boxes):
-        b = trimesh.creation.box(extents=s, transform=T)
-        lines.append(f"o box_{k}")
-        lines += [f"v {a:.6f} {b_:.6f} {c_:.6f}" for a, b_, c_ in b.vertices]
-        lines += [f"f {i + base} {j + base} {l + base}" for i, j, l in b.faces]
-        base += len(b.vertices)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    open(path, "w").write("\n".join(lines) + "\n")
-    return path
-
-
 def cylinder(radius, length=0.2):
     """Solid cylinder along x with its top line at z = 0 (720 facets: chord error < 1e-5 x radius)."""
     m = trimesh.creation.cylinder(radius=radius, height=length, sections=720)
     m.apply_transform(trimesh.transformations.rotation_matrix(np.pi / 2, [0, 1, 0]))
     m.apply_translation([0, 0, -radius])
     return m
+
+
+def ribbed_plate():
+    """A small closed test part (metres): 200 x 150 x 3 mm plate with a 20 mm tall, 10 mm wide rib across it
+    and a 30 mm square boss - flat areas to grasp, a rib and a boss the head must avoid."""
+    return [box([0, 0, 0.0015], [0.20, 0.15, 0.003]), box([0.04, 0, 0.013], [0.010, 0.15, 0.020]),
+            box([-0.06, 0.04, 0.008], [0.030, 0.030, 0.010])]

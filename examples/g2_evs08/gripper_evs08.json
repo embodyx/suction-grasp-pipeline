@@ -1,0 +1,19 @@
+{
+  "name": "evs08",
+  "_comment": "JODELL EVS08 vacuum gripper with 4 custom 1.5-bellows cups (24 mm lip, 23 mm bellows + 6 mm hex fitting), as fitted on the Agibot G2. Measured on the robot: flange -> uncompressed cup lip 128 mm, 49.5 mm cup square; head shape from a head-camera scan (3 boxes: EVS08 body, hand camera on +y, wrist adapter), the body stopping at the EVS08 face 99 mm from the flange. Tool frame = flange axes, origin at the lip plane centre, +z = approach. All shapes are in the tool frame (flange z - 0.128).",
+  "cups": [{"pos": [0.02475, 0.02475, 0], "radius": 0.012}, {"pos": [0.02475, -0.02475, 0], "radius": 0.012},
+           {"pos": [-0.02475, -0.02475, 0], "radius": 0.012}, {"pos": [-0.02475, 0.02475, 0], "radius": 0.012}],
+  "cup_height": 0.029,
+  "seal": {"rim_points": 16, "seal_tol": 0.0015, "reach": 0.005, "max_normal_deg": 30, "min_cups": 3},
+  "hold": {"vacuum_kpa": 75, "safety_g": 1.5},
+  "head": [
+    {"type": "box", "name": "body", "lo": [-0.04, -0.0702, -0.128], "hi": [0.08, 0.07, -0.029]},
+    {"type": "box", "name": "camera", "lo": [-0.02, 0.07, -0.118], "hi": [0.07, 0.14, -0.058]},
+    {"type": "box", "name": "adapter", "lo": [-0.06, -0.0762, -0.168], "hi": [0.08, 0.05, -0.128]},
+    {"type": "cylinder", "name": "wrist (robot link 7, approximate)", "center": [0, 0, -0.213], "radius": 0.06, "height": 0.09}
+  ],
+  "turn_range_deg": 360,
+  "_robot_mounting": "used by the G2 example only (g2_reach.py): flange (arm_r_end_link) -> tool",
+  "T_flange_tool": {"pos": [0.0, 0.0, 0.128], "quat_xyzw": [0, 0, 0, 1]},
+  "_placeholders": ["seal_tol", "reach", "body face at 99 mm (from the cup stack; the scan's box reached 120 mm)", "wrist cylinder (approximate link 7)", "loose cable on -y not modelled"]
+}

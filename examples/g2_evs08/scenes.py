@@ -10,9 +10,11 @@ import sys
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-import gripper as G
-import mesh_io as M
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.dirname(os.path.dirname(HERE)))
+sys.path.insert(0, HERE)
+import g2_parts as GP                     # noqa: E402
+from suction_grasps import poses as G     # noqa: E402
 
 # measured: belt top, width, side frame height, robot placement; placeholders: length, bed depth, frame thickness
 BELT_TOP, BELT_WIDTH, BELT_LEN, BED_DEPTH = 0.783, 0.88, 3.00, 0.12
@@ -26,7 +28,7 @@ _FOOT = {}
 def footprints(name, T_rest):
     """Per stable pose: (xy centre offset, footprint xy points) of the resting part (cached)."""
     if name not in _FOOT:
-        v = M.load_part(name).vertices
+        v = GP.load(name).vertices
         _FOOT[name] = []
         for T in T_rest:
             w = (T[:3, :3] @ v.T).T + T[:3, 3]

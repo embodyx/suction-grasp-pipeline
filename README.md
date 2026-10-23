@@ -1,224 +1,175 @@
-# Suction grasp pipeline (G2, EVS08 head)
+# Suction grasp pipeline
 
-The pipeline chooses suction grasps for sheet-metal parts on the Agibot G2. It works in two phases:
+Suction grasps for rigid parts from their CAD meshes, for any suction head with round cups. It works in two phases:
 
 | Phase | When | Input | Output |
 |---|---|---|---|
-| 1. Grasp database (`build_grasp_db.py`) | Offline, once per part | Gripper model + part CAD mesh | Ranked, validated grasps in the part's CAD frame |
-| 2. Grasp selection (`select_grasp.py`) | Execution time, per pick | Part ID, part pose in the robot base frame, scene (support plane, obstacle boxes), current joints | Ranked grasps in the base frame, each with a collision-free right-arm IK posture (pre-grasp, approach, grasp) |
+| 1. Grasp database (`suction_grasps.build_db`) | Offline, once per part and gripper | Part mesh + gripper description | Ranked, validated grasps in the part's mesh frame, tagged with the resting poses they can be used in |
+| 2. Grasp selection (`suction_grasps.select`) | At execution time | Database + the part's pose in the world (e.g. from a pose estimator), optionally the support plane and obstacle boxes | Ranked grasps (tool poses) in the world frame; optionally checked by your own robot's reachability |
 
-Nothing here moves a robot. Phase 2 only computes poses and joint angles; dry runs can be drawn as pictures.
-The design, the decisions and the full development log are in [PLAN.md](PLAN.md).
-
----
-
-## Gripper
-
-The head is a JODELL EVS08 vacuum gripper with four custom 1.5-bellows cups (24 mm lip). Since 2026-10-22 it is
-the default head on both arms for the G2 models in this project and in `g2_pybullet_sim`. Measured on the robot
-where possible:
-- flange → uncompressed cup lip 128 mm;
-- cups in a 49.5 mm square;
-- vacuum 75 kPa (the EVS08's maximum).
-
-The side hardware (vacuum generators, hand camera) is modelled with the conservative outline the real-robot pick
-project uses: six capsules reaching 155 mm from the tool axis (blue below).
-
-![Gripper model](docs/figures/gripper_model.png)
-
-- **Single source:** the head is built in the sim (`g2_pybullet_sim/build_evs08.py`), and `tools/copy_robot.py`
-  copies the URDF, meshes and SRDF here.
-- `gripper.json` holds the tool frame, cup layout, seal rule, hold check and outline used by the code.
-- **Tool frame:** origin at the centre of the cup square in the lip plane, axes = flange axes, +z = approach.
-
-## Frames
-
-- **Part frame = CAD frame:** the mesh from the pose-estimation service's `models/`, plus `cad_center_mm`. The
-  service reports `T_base_cad_mm`, which phase 2 takes directly (mm → m).
-- **Grasp:** a tool pose in the part frame (4 × 4).
+Phase 1 needs no robot model and no physics engine: it checks the gripper alone against the part. Robot-specific
+checks (IK reachability, preferred wrist turns) plug into phase 2. A worked example for an Agibot G2 with a JODELL
+EVS08 head is in [examples/g2_evs08](examples/g2_evs08).
 
 ---
 
-## Assets (not in the repository)
-
-The repository holds code and docs only. Three things have to be put in place before running anything:
-- **Part meshes** (`assets/parts_src/`): copy them from the pose-estimation service's `models/` folder:
-  - `obj_XXXXXX.ply` for the parts used (mm, centred on their bounding box);
-  - `parts.json`.
-
-  (`stable_poses.json` is not needed: the stable poses are computed.)
-
-  `mesh_io.SMALL` lists the 6 small parts. Their collision models (`assets/parts/`) are built on first use.
-- **Robot model** (`assets/robot/`): `tools/copy_robot.py` copies the G2 with the EVS08 head from a
-  `g2_pybullet_sim` checkout (a `g2_pybullet_sim` folder next to this repository by default; `--sim` to change).
-- **Grasp databases** (`db/`): built by `build_grasp_db.py`, below.
-
-`validate_in_sim.py` also needs a `g2_pybullet_sim` checkout with its own `.venv`. Its location is
-a `g2_pybullet_sim` folder next to this repository by default, or the `G2_SIM` environment variable. The figures `gripper_model.png`
-and `conveyor_reach.png` come from that sim.
-
-## Usage
+## Install
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 ```bash
-.venv/bin/python tools/copy_robot.py
+.venv/bin/pip install embreex
+```
+
+The dependencies are numpy, scipy, trimesh, rtree, networkx, python-fcl and matplotlib. `embreex` (second command)
+is optional but recommended: with it, trimesh casts rays about 100 times faster.
+
+## Quick start
+
+```bash
+.venv/bin/python -m suction_grasps.build_db --gripper my_head.json --parts part.stl --units mm --out db
 ```
 
 ```bash
-.venv/bin/python build_grasp_db.py --workers 3
+.venv/bin/python -m suction_grasps.check_db --db db/part.npz --mesh part.stl --units mm --gripper my_head.json
 ```
 
 ```bash
-.venv/bin/python select_grasp.py examples/request_A5917204300.json --render dry_run.png
+.venv/bin/python -m suction_grasps.select --db db/part.npz --gripper my_head.json --request request.json --mesh part.stl --units mm
 ```
 
-The steps are, in order:
-1. set up the environment;
-2. copy the robot model from the sim (again whenever the head changes);
-3. build the phase 1 databases (`db/<part>.npz`, `.json`, `_grasps.png`; about 2–8 minutes per part, 3 parts at a time);
-4. run phase 2 on a request: JSON in, ranked grasps out, with an optional dry-run picture.
+1. **Build the database** for a part. It writes `db/part.npz` (grasps), `db/part.json` (settings and statistics) and `db/part_grasps.png` (a picture to review). Useful options:
+   - `--offset x y z`: moves the mesh, in its file units, before scaling;
+   - `--mass` (kg): overrides volume × density;
+   - `--thickness` (m): sheet thickness, for a mesh that is a single open surface;
+   - `--density`;
+   - `--points`, `--turns`, `--workers`.
 
-Run everything under a 6 GB memory cap, for example `systemd-run --user --scope -p MemoryMax=6G ...`.
+   `check_db` and `select` take the same `--units` and `--offset`.
+2. **Re-check it** (optional): every saved grasp seals and is collision-free again, and the tags reproduce.
+3. **Select grasps** for a part pose. The request JSON holds:
+   - `T_world_part`: a 4 × 4 pose in metres;
+   - `support`: `{"point": [...], "normal": [...]}`;
+   - `boxes`: `[{"center", "size", "quat_xyzw"}]`.
+
+   Passing `--mesh` enables the local-search fallback.
+
 From Python:
 
 ```python
-from select_grasp import Selector
-sel = Selector("A5917204100")
-grasps, info = sel.select(T_base_part, support={"point": [x, y, z], "normal": [0, 0, 1]}, boxes=[...], k=5)
-grasps[0]["T_flange"], grasps[0]["q_grasp"]          # flange pose to command, IK joints found
-sel.close()                                          # frees the PyBullet worlds
+from suction_grasps import Selector, load_part
+sel = Selector("db/part.npz", "my_head.json", mesh=load_part("part.stl", "mm"))
+grasps, info = sel.select(T_world_part, support={"point": [0, 0, 0.78], "normal": [0, 0, 1]},
+                          boxes=[], reach=my_reach, order=my_order, k=5)
+grasps[0]["T_tool"], grasps[0]["T_pregrasp"], grasps[0]["score"]
 ```
 
-### Tests and checks
+`reach` and `order` are optional plug-ins:
+- **`reach(T_world_tool) -> dict(ok, reason, cost=0, ...)`:** e.g. collision-free IK for your robot. Extra keys, such as joint angles, are returned with the grasp.
+- **`order(T_world_tools) -> keys`:** lower keys are tried first, e.g. turns your wrist can reach. Nothing is dropped.
 
-| Command | What it checks | Status |
-|---|---|---|
-| `tests/test_seal.py` | Seal rule and hold check on synthetic shapes (holes, edges, nuts, tilts, cylinders) | 20/20 |
-| `tests/test_collide.py` | Head collision at the grasp and on the approach (channel, walls, overhangs, support plane) | 13/13 |
-| `tests/test_mesh_io.py` | Part meshes match the pose estimator's models; checker speed | 7/7 |
-| `tests/check_db.py` | Every saved grasp re-seals and is collision-free; resting-pose tags reproduce; coverage | 22/24 (see open items) |
-| `tests/eval_select.py` | Phase 2 on 204 random real-cell conveyor scenes, with and without pose noise | below |
-| `validate_in_sim.py` | Full pick task in `g2_pybullet_sim` (reach, grab, carry home) | below |
+## Frames
+
+- **Part frame:** the mesh file's own frame, after the unit scale (`--units`). A pose estimator that reports poses of the same mesh can feed phase 2 directly. A mesh exported centred on its bounding box can be moved back with `--offset`.
+- **Tool frame:** origin at the centre of the cups' lip plane, +z = approach (into the part), x and y in the lip plane. A grasp is a tool pose in the part frame. Phase 2 returns it in the world frame; turning it into your robot's flange pose is your robot's mounting transform.
+
+## Gripper description
+
+A JSON file. All values are in metres, in the tool frame.
+
+```json
+{
+  "name": "my_head",
+  "cups": [{"pos": [0.025, 0.025, 0], "radius": 0.01}, {"pos": [-0.025, 0.025, 0], "radius": 0.01}],
+  "cup_height": 0.03,
+  "seal": {"rim_points": 16, "seal_tol": 0.0015, "reach": 0.005, "max_normal_deg": 30, "min_cups": 2},
+  "hold": {"vacuum_kpa": 60, "safety_g": 1.5},
+  "head": [{"type": "box", "lo": [-0.05, -0.04, -0.10], "hi": [0.05, 0.04, -0.03]},
+           {"type": "cylinder", "center": [0, 0, -0.15], "radius": 0.04, "height": 0.06},
+           {"type": "capsule", "center": [0.06, 0, -0.08], "radius": 0.01, "height": 0.04},
+           {"type": "mesh", "file": "head.stl", "scale": 0.001}],
+  "turn_range_deg": 360
+}
+```
+
+| Key | Meaning |
+|---|---|
+| `cups` | Any number of round cups, each with its lip centre (`pos`) and lip radius. Cup axes are along tool z. |
+| `cup_height` | How far the cup and its fitting reach behind the lip; used for the approach check. |
+| `seal.seal_tol` | Bellows compliance: how far the lip contact may be from a plane and still seal. |
+| `seal.reach` | Bellows travel: how far from the lip plane the surface may be. |
+| `seal.max_normal_deg` | Steepest surface tilt under a cup. |
+| `seal.min_cups` | Cups that must seal. Default: all of a 1–2 cup head, otherwise all but one. |
+| `hold.vacuum_kpa`, `hold.safety_g` | Each cup pulls at most vacuum × lip area; the part's weight × `safety_g` must be held. |
+| `head` | Everything except the cups, as boxes, cylinders and capsules (axes along tool z) or meshes. Include whatever moves rigidly with the tool, such as brackets, cameras, the adapter and the wrist. |
+| `turn_range_deg` | Head turns about the approach axis are sampled over this range. Use 360 unless the whole head looks the same after a smaller turn. |
+
+`tests/test_gripper.json` is a small complete example, and `examples/g2_evs08/gripper_evs08.json` a real one.
 
 ---
 
 ## How it works
 
-### Phase 1: grasp database
-
-1. **Load and clean the part.** Load it in the CAD frame (closed 2 mm steel solid with 3 weld nuts) and compute mass and centre of mass.
-2. **Stable resting poses.** Find them with trimesh; they are identical to the pose estimator's list.
-3. **Sample candidates.** 10,000 surface points × 24 turns of the head over 360° = 240,000 candidates per part. The cup square repeats every 90°, but the head doesn't.
-4. **Seal rule, per cup.** 25 rays (centre, 8 at half the radius, 16 on the lip), cast with PyBullet's batched ray test on the exact mesh. A cup seals if:
-   - all rays hit within ±5 mm of the lip plane;
-   - the hits lie within 1.5 mm of a plane;
-   - that plane is within 30° of the cup axis.
-
-   A grasp needs 3 of 4 cups to seal.
-5. **Collision.** The head must clear the part at the grasp and along a 100 mm straight approach.
-6. **Hold.** The sealed cups must hold 1.5 × the part's weight with the gripper pointing down.
-7. **Robustness.** The fraction of 10 perturbed copies (±2 mm, up to 3°) that still pass steps 4–5. Quality = robustness × hold margin.
-8. **Resting-pose tags.** In each stable pose, the approach must be within 60° of down, and the head must clear the support plane.
-9. **Pruning.** Non-maximum suppression (5 mm, 10°, 25° turn), keeping up to 1000 grasps per part.
-
-`build_grasp_db.py` draws each database as `db/<part>_grasps.png`: the part seen from above in every resting pose, with the usable grasps as dots coloured by quality and the best spots as cup squares.
-
-### Phase 2: grasp selection
-
-1. **Transform.** Move the database grasps into the base frame.
-2. **Resting pose.** Find the stable pose whose down direction matches the support normal (within 15°) and use its tagged grasps.
-3. **Fast filters.** The approach must be within 60° of down, and the head outline must stay above the support at the grasp and the pre-grasp.
-4. **IK** (right arm + body lift/waist joints): pre-grasp 100 mm back, 4 approach points, then the grasp.
-   - Joints at least 5° inside their limits.
-   - The part, scene boxes and floor are obstacles; the cups may touch the part only at the grasp.
-   - Grasps whose tool x axis heads within ±75° of 120° (base frame) are tried first. The wrist (joint 7 ±88°, joint 6 ±58°) can't reach most other turns.
-5. **Fallback.** Only if nothing is reachable: a guided local search. It turns and shifts the best database grasps and re-checks them online (seal, hold, collision, robustness) before IK.
-6. **Rank.** Score = quality − small costs for tilt, wrist turn from the current joints, and closeness to joint limits.
-
-`select_grasp.py --render` (and `tests/eval_select.py`) draw the chosen grasp's IK posture with the part and the conveyor as a dry-run picture.
-
----
-
-## Results (2026-10-22: EVS08 measured head, real-cell conveyor)
-
-**Real cell.** The robot stands at the conveyor's near end, facing along it, with the belt top at 0.783 m. The
-belt is 0.88 m wide, its centre 0.09 m to the robot's right, and its near end 0.557 m in front of the robot base.
-These come from the real robot's head-camera depth scenes. The right arm reaches the whole belt width out to about
-0.75–0.8 m past the near end:
-
-![Conveyor reach](docs/figures/conveyor_reach.png)
-
 ### Phase 1
 
-| Part | Seal | + collision-free | Saved | Grasps per resting pose |
-|---|---|---|---|---|
-| A5917204100 | 32,792 | 29,731 | 1000 | 478 / 522 |
-| A5917204200 | 33,416 | 30,564 | 1000 | 459 / 541 |
-| A5917204300 | 26,264 | 1,242 | 221 | 221 / **0** / **0** |
-| A5917204400 | 26,668 | 1,208 | 219 | 215 / **4** / **4** |
-| A5917304100 | 18,952 | 8,850 | 1000 | 792 / 208 |
-| A5917304200 | 18,488 | 9,000 | 1000 | 795 / 205 |
+1. **Load the part.** Mass and centre of mass come from a closed mesh (volume × density, steel by default). An open single-surface mesh needs `--thickness` or `--mass`; without either, the hold check is skipped and a warning is recorded.
+2. **Stable resting poses** (trimesh), with probability above 1%.
+3. **Candidates.** Area-weighted surface points (default 10,000) × head turns (default 24 over the turn range). The approach is along −surface normal.
+4. **Seal rule, per cup.** Rays along the approach at the cup centre, half the lip radius and the lip, against the exact mesh. A cup seals if:
+   - every ray hits within `reach` of the lip plane, on a face looking back at the cup;
+   - the hits fit a plane within `seal_tol`;
+   - that plane is within `max_normal_deg` of the cup axis.
 
-Database grasps checked against the sim's own cup rule: 2,940 of 2,960 pass.
+   At least `min_cups` cups must seal.
+5. **Collision** (python-fcl, exact mesh). The head (not the cups) must not touch the part at the grasp, and nothing may touch it along a straight 100 mm approach.
+6. **Hold** (simplified Dex-Net 3.0 wrench resistance).
+   - The gripper points down, and the weight × `safety_g` acts at the centre of mass. The sealed cups share it in a minimum-norm force split that balances the force and both tipping moments.
+   - Margin = 1 − largest pull / cup capacity.
+   - One cup, or cups in a line, can't balance a moment this way. Their lips resist peeling up to capacity × radius / 2.
+7. **Robustness.** The share of 10 perturbed copies (±2 mm, up to 3°) that still pass steps 4–5. Quality = robustness × hold margin.
+8. **Resting-pose tags.** In each stable pose, the approach must be within 60° of down and the head must clear the support plane.
+9. **Pruning.** Non-maximum suppression (5 mm, 10°, 25° turn), keeping up to 1000 grasps, with at least 20 per resting pose where they exist.
 
-### Phase 2 (`tests/eval_select.py`, 34 random real-cell scenes per part)
+### Phase 2
 
-| Part | Scenes with a grasp | Chosen grasp holds (true pose) | With ±2 mm / ±2° pose error | Median / 95th pct time |
-|---|---|---|---|---|
-| A5917204100 | 34/34 | 34/34 | 34/34 | 0.38 / 1.46 s |
-| A5917204200 | 34/34 | 34/34 | 33/34 | 0.44 / 1.60 s |
-| A5917204300 | 14/34 | 14/14 | 13/14 | 0.22 / 4.23 s |
-| A5917204400 | 22/34 | 22/22 | 16/22 | 0.29 / 3.33 s |
-| A5917304100 | 33/34 | 33/33 | 32/33 | 0.47 / 2.27 s |
-| A5917304200 | 34/34 | 34/34 | 32/34 | 0.37 / 1.57 s |
-| **All** | **171/204** | **171/171** | **160/171** | **0.37 / 2.22 s** |
+1. Transform the database grasps into the world frame.
+2. **Resting pose.** Find the stable pose whose down direction matches the support normal (within 15°) and keep its grasps. With no support, or no match, all grasps are used.
+3. **Fast filters.** The approach must be within 60° of down, and the head outline must stay above the support at the grasp and the pre-grasp.
+4. **Check in order** (`order` keys, then quality):
+   - the head and its approach clear the support and the obstacle boxes (exact);
+   - then `reach`, if given.
 
-### Full pick task in the sim (`validate_in_sim.py`, 10 flat + 10 other-pose scenes per part)
+   It stops after `k` grasps or `budget` seconds.
+5. **Local search.** Only when nothing survives and the mesh is given: turns and small shifts of the best database grasps, checked online (seal, hold, collision, robustness) before step 4.
+6. **Rank** by score = quality − 0.1 × tilt / 60° − `reach`'s cost.
 
-The task is reach, grab and carry home, using the sim's planned expert. The baseline is the sim's own single model
-grasp, which was found for the old placeholder head.
+## Tests
 
-| | Sim's model grasp | Pipeline (top 5 tried) |
+```bash
+.venv/bin/python tests/test_seal.py
+```
+
+```bash
+.venv/bin/python tests/test_collide.py
+```
+
+```bash
+.venv/bin/python tests/test_pipeline.py
+```
+
+| Test | What it checks | Status |
 |---|---|---|
-| Part lying flat | 20/60 | **52/60 (87%)** |
-| Other resting poses | — (none) | **43/60 (72%)** |
+| `test_seal.py` | Holes, edges, nuts, tilts, cylinders, back faces, mixed cup sizes, hold and peel | 19/19 |
+| `test_collide.py` | Channels, a one-sided head, approach-only obstacles, support plane, scene-only checks | 12/12 |
+| `test_pipeline.py` | Phase 1 + `check_db` + phase 2 on a synthetic part: plug-ins, local search, obstacles, an open mesh, a single-cup head | 12/12 |
 
-![Sim validation](docs/figures/sim_validation.png)
+## Limits
 
----
-
-## Development history: issues and solutions
-
-| Issue | Solution |
-|---|---|
-| The JT conversions of the CAD were lost | Used the pose estimator's own meshes (same frame as its poses); CAD frame = mesh + `cad_center_mm`, checked to 0.02 mm |
-| trimesh ray casting: 16 ms per grasp, ran out of memory at 1000 grasps | PyBullet batched rays on the exact mesh: 0.15–0.3 ms per grasp, identical hits; grasps checked in chunks of 5000 |
-| PyBullet hit normals always face the ray, so the "hit faces the cup" rule couldn't be checked | Covered by the collision check (the cups sweep every ray origin on the approach); tested |
-| Mirrored twin parts gave very different databases | Turns sampled over 0–75° assumed 90° symmetry, but the head isn't symmetric; now 360° |
-| A 300-grasp cap crowded around the centre of mass | Cap raised to 1000 |
-| Gripper model changed three times (placeholder 40 mm head → sheet-based EVS08 → measured EVS08) | One head definition in the sim (`build_evs08.py`), copied here; databases rebuilt each time; old ones kept in `db_old_*` |
-| Phase 2 IK reached nothing on the conveyor | The body lift/waist joints are needed too (as in the sim) |
-| Phase 2 slow (median 1.16 s): most IK attempts failed on the wrist limits | Preferred heading order (median 0.37 s); nothing dropped |
-| Pose noise turned about the CAD origin, 1–2 m from the part | Noise turned about the part's centre |
-| The side-hardware outline overlaps the robot's own forearm and wrist (25 of 900 recorded real frames) | Self-collision of that outline against the arm's links 4–6 skipped (the real hardware cannot hit them) |
-| Memory: PyBullet worlds are not freed by garbage collection | `Selector.close()`; one selector at a time in the validation |
-| Pipeline and sim both have an `ik.py` | Validation runs each stage in its own process |
-| Carry-home failures in the sim (tilted parts hung into the conveyor at the home pose) | Mostly gone since the conveyor matches the real cell (the hands at home are no longer over the belt) |
-
-## Open items and future work
-
-- **Side hardware outline.** The capsule ring (310 mm across) is a conservative envelope, not the real shape. It removes about 90% of the grasps on A5917204300/4400 and all of them in two of their resting poses (`check_db` 22/24). Measuring where the vacuum generators and the camera actually sit, and modelling them as boxes, is the next improvement.
-- **Placeholders:**
-  - seal tolerance (1.5 mm) and bellows travel (5 mm);
-  - the EVS08's mounting angle on the flange and the 14 mm adapter;
-  - conveyor length, bed depth, frame thickness, and the drive motor at the near-left corner (not modelled).
-- **Not covered:**
-  - a carry or place-pose check in phase 2 (the held part's clearance after the grasp);
-  - neighbouring parts as obstacles;
-  - the left arm;
-  - motion planning beyond the reachability check.
-- **The sim's own suction material** (model grasps, pools, demos, policies, learned suction scorer) was made with the old placeholder head and needs rebuilding. The sim's table pick test fails until then.
-- **Real robot:** only dry runs so far, with poses from the pose-estimation service and a rendered posture; nothing has been sent to the arm.
+- **Cups:** round cups whose axes are along the tool's approach axis only; no oval or rectangular pads.
+- **Head:** the head is rigid. Hoses, cables and bellows sideways are not modelled.
+- **Hold check:** it assumes the gripper points down while carrying, and has no dynamic loads beyond `safety_g`.
+- **Seal model:** geometric only (contact planarity and coverage), not airflow. `seal_tol` and `reach` should be measured for your cups.
+- **Phase 2 checks:** the part is only checked against the gripper and the given boxes. Neighbouring parts must be passed as boxes, and arm or robot collisions belong in `reach`.
+- **Support plane:** the exact collision check stands in a 4 m square slab, centred under the part, for the support plane.

@@ -4,7 +4,7 @@ Copied from g2_pybullet_sim/ik.py (2026-10-22). Changes: robot loading (robot.py
 
 All poses are in the robot's base_link frame (the frame the robot reports its end-effector poses in).
 The "approach axis" is the direction the suction cups point = +Z of arm_*_end_link (the flange).
-This pipeline targets the flange (frame="flange"); the tool point is 128 mm further along +Z (gripper.json).
+This pipeline targets the flange (frame="flange"); the tool point is 128 mm further along +Z (gripper_evs08.json).
 
 Example:
     kin = G2Kin()
@@ -88,10 +88,11 @@ class G2Kin:
             for i, a in enumerate(group):
                 for b in group[i + 1:]:
                     skip.add(frozenset((a, b)))
-            # EVS08 side hardware (gripper_s_empty_link) is a measured envelope (lfd-pick's capsule ring) that
-            # overlaps the arm's own forearm/wrist links (in 25 of 900 frames recorded on the real robot also link4)
-            # while the real hardware does not hit them -> not checked against them
-            for w in (f"arm_{s}_link4", f"arm_{s}_link5", f"arm_{s}_link6"):
+            # EVS08 side hardware (gripper_s_empty_link: hand camera + wrist adapter, measured boxes) is mounted at the
+            # wrist; its adapter box overlaps the arm's own link5 in 326 of 900 frames recorded on the real robot (the
+            # scan likely caught part of the wrist) while the real hardware does not hit it -> not checked against
+            # the wrist links 5 and 6
+            for w in (f"arm_{s}_link5", f"arm_{s}_link6"):
                 skip.add(frozenset((f"gripper_{s}_empty_link", w)))
         self.skip = skip
 

@@ -1,12 +1,12 @@
-"""Step 6: validate the pipeline in g2_pybullet_sim (the only file that uses the sim). Sim only, no robot.
+"""Validate the pipeline in g2_pybullet_sim (the G2 simulation; only this example uses it). Sim only, no robot.
 
-The sim and this project both have an ik.py, so the stages run in separate processes (main() runs them in order):
+The sim and this example both have an ik.py, so the stages run in separate processes (main() runs them in order):
   frames  (pipeline) CAD -> sim part frame per part (exact: both meshes come from the same conversion, same vertex
                      order -> rigid fit on the vertices) and which stable pose is the sim's "flat" pose
   scenes  (sim)      conveyor scenes (real cell: robot at the conveyor's near end, conveyor.py): FLAT (the sim's own
                      sample_scene, part lying as the sim always places it) and OTHER (a different stable pose of the
-                     part, placed on the belt like tests/scenes.py)
-  select  (pipeline) Selector(part).select(...) for every scene -> top K grasps (base frame)
+                     part, placed on the belt like scenes.py)
+  select  (pipeline) suction_grasps Selector + the G2 reachability plug-in for every scene -> top K grasps
   run     (sim)      (1) database cross-check: every database grasp usable in the flat pose against the sim's own cup
                          rule (grasp_eval.SuctionEvaluator), and the sim's single model grasp vs the database
                      (2) the whole pick task (reach, grab, carry home) with the planned expert (motion_plan) on the
@@ -17,7 +17,8 @@ sim process parts use the sim's fine collision model (patched at runtime, no sim
 Note: the sim's grab rule counts a cup only on a surface facing up within 45 deg (pick_env TOP_NORMAL_Z); the
 pipeline allows approaches up to 60 deg from down.
 
-Run: .venv/bin/python validate_in_sim.py [--per-part 10] [--workers 3]
+Run (from the repository root): python examples/g2_evs08/validate_in_sim.py [--per-part 10] [--workers 3]
+The sim checkout (with its own .venv) is G2_SIM, default: a g2_pybullet_sim folder next to the repository.
 Writes logs/validate_in_sim.json, logs/validate_in_sim.png (and logs/sim_*.json between the stages).
 """
 import argparse
@@ -29,11 +30,16 @@ import time
 
 import numpy as np
 
-ROOT = os.path.dirname(os.path.abspath(__file__))
-SIM = os.path.expanduser(os.environ.get("G2_SIM", os.path.join(os.path.dirname(ROOT), "g2_pybullet_sim")))  # sim checkout (env G2_SIM, default: next to this repo)
-PIPE_PY = os.path.join(ROOT, ".venv", "bin", "python")
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+ROOT = os.path.dirname(os.path.abspath(__file__))                       # this example folder
+REPO = os.path.dirname(os.path.dirname(ROOT))
+SIM = os.path.expanduser(os.environ.get("G2_SIM", os.path.join(os.path.dirname(REPO), "g2_pybullet_sim")))  # sim checkout
+PIPE_PY = sys.executable                                                 # the pipeline's Python (this one)
 SIM_PY = os.path.join(SIM, ".venv", "bin", "python")
 LOGS = os.path.join(ROOT, "logs")
+# the example's parts (= g2_parts.SMALL; not imported: the sim-side stages run in the sim's Python, which does not
+# have the pipeline's packages)
 PARTS = ["A5917204100", "A5917204200", "A5917204300", "A5917204400", "A5917304100", "A5917304200"]
 K = 5                       # pipeline grasps tried per scene (first that plans wins)
 EVAL_SEED = 90_000
@@ -46,10 +52,10 @@ def jpath(name):
 # ====================================================================== pipeline-side stages
 def stage_frames():
     import trimesh
-    import mesh_io as M
+    import g2_parts as GP
     out = {}
     for n in PARTS:
-        cad = M.load_part(n)
+        cad = GP.load(n)
         sim = trimesh.load(os.path.join(SIM, "assets", "parts", n + "_visual.obj"), force="mesh", process=False)
         sim.merge_vertices()
         A, B = cad.vertices, sim.vertices
@@ -71,16 +77,22 @@ def stage_frames():
 
 
 def stage_select():
-    import select_grasp as SG
+    import g2_parts as GP
+    from g2_reach import G2Reach
+    from suction_grasps.select import Selector
     scenes = json.load(open(jpath("sim_scenes.json")))
     out = []
-    sel = None
+    part, sel, reach = None, None, None
     for i, sc in enumerate(scenes):
-        if sel is None or sel.part != sc["part"]:          # one selector at a time (memory); scenes are grouped by part
-            if sel is not None:
-                sel.close()
-            sel = SG.Selector(sc["part"])
-        res, info = sel.select(np.array(sc["T_base_cad"]), sc["support"], sc["boxes"], k=K)
+        if sc["part"] != part:                             # one part at a time (memory); scenes are grouped by part
+            if reach is not None:
+                reach.close()
+            part = sc["part"]
+            mesh = GP.load(part)
+            sel, reach = Selector(GP.db_path(part), GP.GRIPPER, mesh), G2Reach(mesh, GP.GRIPPER, part)
+        T = np.array(sc["T_base_cad"])
+        reach.set_scene(T, sc["boxes"])
+        res, info = sel.select(T, sc["support"], sc["boxes"], reach=reach, order=reach.order, k=K)
         out.append(dict(grasps=[dict(T=r["T_tool"].tolist(), source=r["source"], quality=r["quality"],
                                      tilt_deg=r["tilt_deg"]) for r in res], info=info))
         print(f"[{i + 1}/{len(scenes)}] {sc['part']} {sc['kind']}: {len(res)} grasps, {info['seconds']} s", flush=True)
@@ -90,7 +102,7 @@ def stage_select():
 # ====================================================================== sim-side setup
 def sim_imports():
     """Import the sim with fine part collisions (runtime only, no sim file edited). The sim's default suction head
-    ("suck4") is the EVS08 since 2026-10-22, the same URDF this project copies (tools/copy_robot.py)."""
+    ("suck4") is the EVS08 since 2026-10-22, the same URDF this project copies (copy_robot.py)."""
     sys.path.insert(0, SIM)
     import parts as P
     lp = P.load_part
@@ -135,7 +147,7 @@ def stage_scenes(per_part):
             if flat:                                                   # the sim's own placement
                 T_world_sim = pose(*poses["part"])
                 k = f["flat_pose"]
-            else:                                                      # another stable pose, placed like tests/scenes.py
+            else:                                                      # another stable pose, placed like scenes.py
                 others = [i for i in range(len(prob)) if i != f["flat_pose"]]
                 k = int(rng.choice(others, p=prob[others] / prob[others].sum()))
                 while True:                                            # frame C: x along the belt, y across

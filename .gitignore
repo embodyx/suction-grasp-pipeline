@@ -3,6 +3,7 @@
 __pycache__/
 *.pyc
 build/
+*.egg-info/
 
 # Example data that is not published (CAD-derived part meshes, robot description) and generated outputs
 examples/*/assets/

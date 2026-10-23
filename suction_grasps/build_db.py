@@ -76,8 +76,9 @@ def build(part_path, gripper_path, out, name=None, units="mm", offset=(0, 0, 0),
     # 1-2. part, mass, resting poses
     m = PT.load_part(part_path, units, offset)
     mass, com = PT.properties(m, density, mass, thickness)
-    if not np.isfinite(mass):
-        stats["warning"] = "open mesh without --mass or --thickness: mass unknown, hold check skipped"
+    if not np.isfinite(mass):                     # a mesh that is not watertight has no volume to weigh
+        stats["warning"] = ("mesh is not watertight and neither --mass nor --thickness is given: mass unknown, hold "
+                            "check skipped (pass --mass for a solid part, --thickness for a part modelled as one surface)")
         print(f"{name}: {stats['warning']}", flush=True)
     poses = PT.stable_poses(m, com, min_prob)
 

@@ -8,7 +8,9 @@ The cup seals if:
   2. every hit is on a face looking back at the cup (not the inside of material);
   3. the hits fit a plane within `seal_tol` (max residual): the bellows can follow small unevenness only;
   4. that plane's normal is within `max_normal_deg` of the cup axis.
-A grasp is valid if at least `min_cups` cups seal (collisions are checked separately, collide.py).
+Cups that share a vacuum source (gripper "channels") hold only together: a channel with an open cup leaks and holds
+nothing, so its sealed cups do not count either. A grasp is valid if at least `min_cups` cups seal in channels whose
+cups all seal (collisions are checked separately, collide.py).
 
 Hold check (simplified Dex-Net 3.0 wrench resistance): the gripper points straight down, so the part's weight
 x safety_g pulls along +z of the tool at the centre of mass. The sealed cups share that load (minimum-norm force
@@ -75,6 +77,9 @@ class SealChecker:
             resid[i, j] = np.abs(coef @ A.T - depth[i, j]).max(-1) if len(i) else resid[i, j]
             normal_ok[i, j] = 1 / np.sqrt(1 + coef[:, 0] ** 2 + coef[:, 1] ** 2) >= self.max_normal
         sealed = all_hit & (resid <= s["seal_tol"]) & normal_ok
+        for ch in self.g.channels:                                          # a channel with an open cup leaks
+            if len(ch) > 1:
+                sealed[:, ch] &= sealed[:, ch].all(1, keepdims=True)
         n_sealed = sealed.sum(-1)
         return dict(sealed=sealed, n_sealed=n_sealed, valid=n_sealed >= s["min_cups"], resid=resid, depth=depth)
 

@@ -2,4 +2,11 @@
 build_db), and grasp selection at execution time from the part's pose (phase 2, select)."""
 from .gripper import Gripper
 from .part import load_part, properties, stable_poses
-from .select import Selector
+
+
+def __getattr__(name):
+    """Selector is imported on first use, so `python -m suction_grasps.select` does not import the module twice."""
+    if name == "Selector":
+        from .select import Selector
+        return Selector
+    raise AttributeError(name)

@@ -9,6 +9,8 @@ plane. Everything in metres, in the tool frame:
     "cup_height": 0.03,                                    cup + fitting length behind the lip (approach check)
     "seal": {"rim_points": 16, "seal_tol": 0.0015, "reach": 0.005, "max_normal_deg": 30, "min_cups": 3},
     "hold": {"vacuum_kpa": 60, "safety_g": 1.5},
+    "channels": [[0, 1], [2, 3]],                          optional: cups sharing a vacuum source (indices into
+                                                           "cups"); a channel holds only if ALL its cups seal
     "head": [                                              the rest of the head (NOT the cups), as shapes:
       {"type": "box", "lo": [x, y, z], "hi": [x, y, z]},
       {"type": "cylinder", "center": [x, y, z], "radius": r, "height": h},   axis along tool z
@@ -43,6 +45,13 @@ class Gripper:
             self.seal["min_cups"] = len(self.cups) if len(self.cups) <= 2 else len(self.cups) - 1
         self.hold = {**DEFAULT_HOLD, **spec.get("hold", {})}
         self.turn_range = np.radians(spec.get("turn_range_deg", 360.0))
+        # vacuum channels: cups sharing a source; a cup not listed has its own (valve / generator)
+        self.channels = [list(c) for c in spec.get("channels") or []]
+        listed = [i for c in self.channels for i in c]
+        if (any(type(i) is not int or not 0 <= i < len(self.cups) for i in listed)
+                or len(set(listed)) != len(listed)):
+            raise ValueError("gripper 'channels' must hold cup indices (integers), each at most once")
+        self.channels += [[i] for i in range(len(self.cups)) if i not in listed]
         self.head = [self._shape(s, base_dir) for s in spec.get("head", [])]    # trimesh objects, tool frame
         # cup bodies for the approach check: cylinders from the lip back by cup_height
         self.cup_shapes = [trimesh.creation.cylinder(r, self.cup_height,

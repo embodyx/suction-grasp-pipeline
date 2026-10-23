@@ -1,6 +1,6 @@
 """Pictures for review. db_picture: the part seen from above in each resting pose (ray-cast shaded view) with
 every database grasp usable in that pose as a dot at its tool centre, coloured by quality, and the best SHOW spots
-as numbered cup outlines (filled circle = cup seals, open = cup off the part)."""
+as numbered cup outlines (filled circle = cup holds, open = cup off the part or on a leaking channel)."""
 import os
 
 import matplotlib
@@ -36,7 +36,8 @@ def db_picture(npz_path, m, gripper, out=None):
     d = np.load(npz_path)
     name = os.path.splitext(os.path.basename(npz_path))[0]
     poses = d["T_rest"]
-    spread = 2 * (np.linalg.norm(gripper.cups[:, :2], axis=1) + gripper.cup_radii).max()   # drawn spots this far apart
+    # numbered spots at least the head's cup radius apart: distinct spots, though their outlines may overlap
+    spread = (np.linalg.norm(gripper.cups[:, :2], axis=1) + gripper.cup_radii).max()
     fig, axes = plt.subplots(1, max(1, len(poses)), figsize=(6.2 * max(1, len(poses)), 5.2), squeeze=False)
     cmap = plt.get_cmap("Blues")
     q_all = d["quality"]
@@ -68,7 +69,8 @@ def db_picture(npz_path, m, gripper, out=None):
             ax.text(*(T[:2, 3] * 1000), str(rank + 1), ha="center", va="center", fontsize=8, zorder=5,
                     color="#1d1d1b", bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.8))
         ax.set_title(f"resting pose {k + 1} (probability {d['pose_prob'][k] * 100:.0f}%)\n"
-                     f"{len(usable)} usable grasps (dots); best {len(shown)} spots numbered", fontsize=10, loc="left")
+                     f"{len(usable)} usable grasp{'s' if len(usable) != 1 else ''} (dots); best {len(shown)} spot{'s' if len(shown) != 1 else ''} "
+                     "numbered", fontsize=10, loc="left")
         ax.set_xlabel("mm (resting frame, seen from above)")
         ax.set_aspect("equal")
         for s_ in ("top", "right"):
@@ -76,7 +78,7 @@ def db_picture(npz_path, m, gripper, out=None):
     sm = plt.cm.ScalarMappable(cmap=matplotlib.colors.LinearSegmentedColormap.from_list(
         "q", [cmap(0.35), cmap(1.0)]), norm=plt.Normalize(0, qmax))
     fig.colorbar(sm, ax=axes[0].tolist(), shrink=0.7, label="quality = robustness x hold margin")
-    fig.suptitle(f"{name}: suction grasp database (filled circle = cup seals, open = cup off)", x=0.02, y=0.98,
+    fig.suptitle(f"{name}: suction grasp database (filled circle = cup holds, open = cup does not)", x=0.02, y=0.98,
                  ha="left", fontsize=12)
     out = out or os.path.splitext(npz_path)[0] + "_grasps.png"
     fig.savefig(out, dpi=80, bbox_inches="tight")

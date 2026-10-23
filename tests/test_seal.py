@@ -99,7 +99,30 @@ def main():
     check("per-cup radius on a 20 mm strip: big cup (30 mm) fails, small cup (10 mm) seals",
           r["sealed"][0].tolist() == [False, True], f"sealed {r['sealed'][0].tolist()}")
 
-    # 9. hold check
+    # 9. vacuum channels: cups 1+2 and 3+4 share a source; a hole under cup 1 also switches off cup 2
+    import copy
+    spec = copy.deepcopy(g.spec)
+    spec["channels"] = [[0, 1], [2, 3]]
+    gc = Gripper(spec)
+    holed = SH.as_mesh(SH.plate_with_holes([c[0][:2]]))
+    rc = S.SealChecker(holed, gc).check([T])
+    check("channels: a hole under cup 1 also disables cup 2 (same channel) -> 2 cups, invalid with min_cups 3",
+          rc["sealed"][0].tolist() == [False, False, True, True] and not rc["valid"][0], f"sealed {rc['sealed'][0].tolist()}")
+    check("no channels given: each cup on its own (cups 2-4 seal)",
+          S.SealChecker(holed, g).check([T])["sealed"][0].tolist() == [False, True, True, True])
+    spec["channels"] = [[0, 1]]                              # cups 3 and 4 not listed: each keeps its own source
+    check("channels listed in part: unlisted cups get their own", Gripper(spec).channels == [[0, 1], [2], [3]],
+          f"{Gripper(spec).channels}")
+    bad = []
+    for chans in ([[0, 0]], [[0.0, 1]], [[True, 2]], [[4]]):  # duplicate, float, bool, out of range
+        spec["channels"] = chans
+        try:
+            Gripper(spec)
+        except ValueError:
+            bad.append(True)
+    check("channels: duplicate, non-integer and out-of-range indices are rejected", len(bad) == 4, f"{len(bad)}/4")
+
+    # 10. hold check
     cap = g.cup_capacity()[0]
     W = 0.2 * 9.81 * g.hold["safety_g"]                      # light part: every share below one cup's capacity
     T0 = G.tool_from_point([0, 0, 0], DOWN)
@@ -115,7 +138,7 @@ def main():
     check("hold, single cup: centred holds, 50 mm off-centre peels more (peel model)", ms0 > ms1 >= 0,
           f"margin {ms0:.3f} -> {ms1:.3f}")
 
-    # 10. no grasps at all: empty arrays, no error
+    # 11. no grasps at all: empty arrays, no error
     r0 = S.SealChecker(SH.as_mesh(SH.plate()), g).check(np.zeros((0, 4, 4)))
     check("empty input gives empty results", r0["valid"].shape == (0,) and r0["sealed"].shape == (0, 4))
 

@@ -15,16 +15,20 @@ EVS08 head is in [examples/g2_evs08](examples/g2_evs08).
 
 ## Install
 
+From the repository root:
+
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -e .
 ```
 
 ```bash
 .venv/bin/pip install embreex
 ```
 
-The dependencies are numpy, scipy, trimesh, rtree, networkx, python-fcl and matplotlib. `embreex` (second command)
-is optional but recommended: with it, trimesh casts rays about 100 times faster.
+- **Requirements:** Python 3.10 or newer (tested 3.10–3.14). The dependencies are numpy, scipy, trimesh, rtree, networkx, python-fcl and matplotlib; `requirements.txt` lists the same.
+- **`embreex`** (second command) is optional but recommended: with it, trimesh casts rays about 100 times faster.
+- **Installing:** `pip install -e .` makes `suction_grasps` importable from anywhere. Without installing, run from the repository root.
+- **CPU threads:** numpy may use all CPU cores. Set `OMP_NUM_THREADS=1` to keep a run on one core per process.
 
 ## Quick start
 
@@ -45,16 +49,21 @@ is optional but recommended: with it, trimesh casts rays about 100 times faster.
    - `--mass` (kg): overrides volume × density;
    - `--thickness` (m): sheet thickness, for a mesh that is a single open surface;
    - `--density`;
-   - `--points`, `--turns`, `--workers`.
+   - `--points`, `--turns`;
+   - `--workers`: parts built in parallel; one part always uses one process.
 
-   `check_db` and `select` take the same `--units` and `--offset`.
+   `--mass`, `--thickness`, `--offset` and `--units` apply to every part in one call, so parts that differ need separate calls. `check_db` and `select` take the same `--units` and `--offset`.
+
+   A mesh that is not watertight has no volume to weigh. Pass `--mass` for a solid part, or `--thickness` for a part modelled as one surface. Otherwise the hold check is skipped, and `<part>.json` records a warning.
 2. **Re-check it** (optional): every saved grasp seals and is collision-free again, and the tags reproduce.
 3. **Select grasps** for a part pose. The request JSON holds:
    - `T_world_part`: a 4 × 4 pose in metres;
    - `support`: `{"point": [...], "normal": [...]}`;
-   - `boxes`: `[{"center", "size", "quat_xyzw"}]`.
+   - `boxes`: `[{"center", "size", "quat_xyzw"}]`, where `size` is the full edge length in metres.
 
-   Passing `--mesh` enables the local-search fallback.
+   `--k` sets the number of grasps (default 5); `--mesh` enables the local-search fallback. It prints one info line (counts and rejection reasons) and then one JSON line per grasp, best first: `id`, `source`, `score`, `quality`, `tilt_deg`, `tool_pos`, `tool_quat_xyzw`.
+
+   For a part lying on another part, put the support plane at the part's lowest point, and pass the part below as boxes if needed.
 
 From Python:
 
@@ -69,6 +78,16 @@ grasps[0]["T_tool"], grasps[0]["T_pregrasp"], grasps[0]["score"]
 `reach` and `order` are optional plug-ins:
 - **`reach(T_world_tool) -> dict(ok, reason, cost=0, ...)`:** e.g. collision-free IK for your robot. Extra keys, such as joint angles, are returned with the grasp.
 - **`order(T_world_tools) -> keys`:** lower keys are tried first, e.g. turns your wrist can reach. Nothing is dropped.
+
+Each grasp carries:
+- `T_tool`, and `T_pregrasp`, which is 100 mm back along the approach (`pregrasp=`);
+- `score`, `quality` and `tilt_deg`;
+- `source`: `database` or `local search`.
+
+Other `select` arguments:
+- `budget`: seconds for the database pass (default 2), which matters when `reach` is slow;
+- `fallback` and `fallback_budget` (default 3 s) for the local search;
+- `max_down_deg` (default 60).
 
 ## Frames
 
@@ -86,6 +105,7 @@ A JSON file. All values are in metres, in the tool frame.
   "cup_height": 0.03,
   "seal": {"rim_points": 16, "seal_tol": 0.0015, "reach": 0.005, "max_normal_deg": 30, "min_cups": 2},
   "hold": {"vacuum_kpa": 60, "safety_g": 1.5},
+  "channels": [[0, 1]],
   "head": [{"type": "box", "lo": [-0.05, -0.04, -0.10], "hi": [0.05, 0.04, -0.03]},
            {"type": "cylinder", "center": [0, 0, -0.15], "radius": 0.04, "height": 0.06},
            {"type": "capsule", "center": [0.06, 0, -0.08], "radius": 0.01, "height": 0.04},
@@ -98,13 +118,21 @@ A JSON file. All values are in metres, in the tool frame.
 |---|---|
 | `cups` | Any number of round cups, each with its lip centre (`pos`) and lip radius. Cup axes are along tool z. |
 | `cup_height` | How far the cup and its fitting reach behind the lip; used for the approach check. |
+| `seal.rim_points` | Rays on each cup's lip (default 16), plus half as many at half the lip radius and one at the centre. |
 | `seal.seal_tol` | Bellows compliance: how far the lip contact may be from a plane and still seal. |
 | `seal.reach` | Bellows travel: how far from the lip plane the surface may be. |
 | `seal.max_normal_deg` | Steepest surface tilt under a cup. |
-| `seal.min_cups` | Cups that must seal. Default: all of a 1–2 cup head, otherwise all but one. |
+| `seal.min_cups` | Cups that must seal. Default: all of a 1–2 cup head, otherwise all but one. If all cups share one vacuum source, an open cup leaks: use `channels`, or set `min_cups` to the number of cups. |
+| `channels` | Optional: cups that share a vacuum source, as lists of indices into `cups`. A channel holds only if all its cups seal; its cups don't count otherwise. A cup not listed has its own source (the default for every cup). |
 | `hold.vacuum_kpa`, `hold.safety_g` | Each cup pulls at most vacuum × lip area; the part's weight × `safety_g` must be held. |
-| `head` | Everything except the cups, as boxes, cylinders and capsules (axes along tool z) or meshes. Include whatever moves rigidly with the tool, such as brackets, cameras, the adapter and the wrist. |
+| `head` | Everything except the cups, as boxes, cylinders and capsules (axes along tool z) or meshes. Include whatever moves rigidly with the tool, such as brackets, cameras, the adapter and the wrist. Shape details below. |
 | `turn_range_deg` | Head turns about the approach axis are sampled over this range. Use 360 unless the whole head looks the same after a smaller turn. |
+
+Head shapes:
+- **Box:** `lo` and `hi` are opposite corners.
+- **Cylinder:** `height` is its full length.
+- **Capsule:** `height` is the distance between the centres of its two end spheres, so the total length is `height + 2 radius`.
+- **Mesh:** `file` is relative to the gripper JSON. It also takes `scale`, applied first, then `transform`: a 4 × 4 matrix into the tool frame, with its translation in metres.
 
 `tests/test_gripper.json` is a small complete example, and `examples/g2_evs08/gripper_evs08.json` a real one.
 
@@ -122,7 +150,7 @@ A JSON file. All values are in metres, in the tool frame.
    - the hits fit a plane within `seal_tol`;
    - that plane is within `max_normal_deg` of the cup axis.
 
-   At least `min_cups` cups must seal.
+   Cups on a shared vacuum channel hold only if all of them seal. At least `min_cups` cups must hold.
 5. **Collision** (python-fcl, exact mesh). The head (not the cups) must not touch the part at the grasp, and nothing may touch it along a straight 100 mm approach.
 6. **Hold** (simplified Dex-Net 3.0 wrench resistance).
    - The gripper points down, and the weight × `safety_g` acts at the centre of mass. The sealed cups share it in a minimum-norm force split that balances the force and both tipping moments.
@@ -161,7 +189,7 @@ A JSON file. All values are in metres, in the tool frame.
 
 | Test | What it checks | Status |
 |---|---|---|
-| `test_seal.py` | Holes, edges, nuts, tilts, cylinders, back faces, mixed cup sizes, hold and peel | 19/19 |
+| `test_seal.py` | Holes, edges, nuts, tilts, cylinders, back faces, mixed cup sizes, vacuum channels, hold and peel | 23/23 |
 | `test_collide.py` | Channels, a one-sided head, approach-only obstacles, support plane, scene-only checks | 12/12 |
 | `test_pipeline.py` | Phase 1 + `check_db` + phase 2 on a synthetic part: plug-ins, local search, obstacles, an open mesh, a single-cup head | 12/12 |
 
@@ -170,6 +198,6 @@ A JSON file. All values are in metres, in the tool frame.
 - **Cups:** round cups whose axes are along the tool's approach axis only; no oval or rectangular pads.
 - **Head:** the head is rigid. Hoses, cables and bellows sideways are not modelled.
 - **Hold check:** it assumes the gripper points down while carrying, and has no dynamic loads beyond `safety_g`.
-- **Seal model:** geometric only (contact planarity and coverage), not airflow. `seal_tol` and `reach` should be measured for your cups.
+- **Seal model:** geometric only (contact planarity and coverage), not airflow. `seal_tol` and `reach` should be measured for your cups. Rays sample each cup's face on two rings (the lip and half its radius) plus the centre, 25 per cup by default. A hole smaller than their spacing can be missed: `rim_points` makes the rings denser, but a hole between them can still be missed.
 - **Phase 2 checks:** the part is only checked against the gripper and the given boxes. Neighbouring parts must be passed as boxes, and arm or robot collisions belong in `reach`.
 - **Support plane:** the exact collision check stands in a 4 m square slab, centred under the part, for the support plane.

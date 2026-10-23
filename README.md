@@ -152,7 +152,7 @@ Head shapes:
 
    Cups on a shared vacuum channel hold only if all of them seal. At least `min_cups` cups must hold.
 5. **Collision** (python-fcl, exact mesh). The head (not the cups) must not touch the part at the grasp, and nothing may touch it along a straight 100 mm approach.
-6. **Hold** (simplified Dex-Net 3.0 wrench resistance).
+6. **Hold** (simplified Dex-Net 3.0 wrench resistance [[1]](#references)).
    - The gripper points down, and the weight × `safety_g` acts at the centre of mass. The sealed cups share it in a minimum-norm force split that balances the force and both tipping moments.
    - Margin = 1 − largest pull / cup capacity.
    - One cup, or cups in a line, can't balance a moment this way. Their lips resist peeling up to capacity × radius / 2.
@@ -201,3 +201,59 @@ Head shapes:
 - **Seal model:** geometric only (contact planarity and coverage), not airflow. `seal_tol` and `reach` should be measured for your cups. Rays sample each cup's face on two rings (the lip and half its radius) plus the centre, 25 per cup by default. A hole smaller than their spacing can be missed: `rim_points` makes the rings denser, but a hole between them can still be missed.
 - **Phase 2 checks:** the part is only checked against the gripper and the given boxes. Neighbouring parts must be passed as boxes, and arm or robot collisions belong in `reach`.
 - **Support plane:** the exact collision check stands in a 4 m square slab, centred under the part, for the support plane.
+
+## References
+
+### Papers
+
+1. J. Mahler, M. Matl, X. Liu, A. Li, D. Gealy, K. Goldberg. *Dex-Net 3.0: Computing Robust Vacuum Suction Grasp Targets in Point Clouds using a New Analytic Model and Deep Learning.* ICRA 2018. [arXiv:1709.06670](https://arxiv.org/abs/1709.06670)
+2. J. Mahler, F. T. Pokorny, B. Hou, M. Roderick, M. Laskey, M. Aubry, K. Kohlhoff, T. Kröger, J. Kuffner, K. Goldberg. *Dex-Net 1.0: A Cloud-Based Network of 3D Objects for Robust Grasp Planning Using a Multi-Armed Bandit Model with Correlated Rewards.* ICRA 2016. [doi:10.1109/ICRA.2016.7487342](https://doi.org/10.1109/ICRA.2016.7487342)
+3. J. Pan, S. Chitta, D. Manocha. *FCL: A General Purpose Library for Collision and Proximity Queries.* ICRA 2012. [doi:10.1109/ICRA.2012.6225337](https://doi.org/10.1109/ICRA.2012.6225337)
+4. I. Wald, S. Woop, C. Benthin, G. S. Johnson, M. Ernst. *Embree: A Kernel Framework for Efficient CPU Ray Tracing.* ACM Transactions on Graphics 33(4), 2014. [doi:10.1145/2601097.2601199](https://doi.org/10.1145/2601097.2601199)
+
+### Software
+
+| Package | Reference |
+|---|---|
+| trimesh | M. Dawson-Haggerty et al., [trimesh.org](https://trimesh.org) |
+| python-fcl | Python bindings for FCL [3], [github.com/BerkeleyAutomation/python-fcl](https://github.com/BerkeleyAutomation/python-fcl) |
+| embreex (optional) | Python bindings for Embree [4], [github.com/trimesh/embreex](https://github.com/trimesh/embreex) |
+| NumPy | C. R. Harris et al., *Array programming with NumPy*, Nature 585, 2020 |
+| SciPy | P. Virtanen et al., *SciPy 1.0*, Nature Methods 17, 2020 |
+| Rtree, NetworkX | [Rtree](https://github.com/Toblerity/rtree) (libspatialindex); A. Hagberg, D. Schult, P. Swart, *NetworkX*, SciPy 2008 |
+| Matplotlib | J. D. Hunter, *Matplotlib: A 2D Graphics Environment*, Computing in Science & Engineering 9(3), 2007 |
+| PyBullet (example only) | E. Coumans, Y. Bai, *PyBullet*, [pybullet.org](https://pybullet.org) |
+| scikit-learn (example only) | F. Pedregosa et al., *Scikit-learn: Machine Learning in Python*, JMLR 12, 2011 |
+
+## Where each reference is used
+
+### Ideas taken from the papers
+
+| Source | Where | What was taken, and how this pipeline differs |
+|---|---|---|
+| Dex-Net 3.0 [1] | Phase 1, step 3 (`build_db.py`) | **Candidates:** points sampled on the object's surface, approaching along the surface normal. Here the points are area-weighted on the CAD mesh, and each is tried with several head turns, since a multi-cup head is not round. |
+| Dex-Net 3.0 [1] | Phase 1, step 4 (`seal.py`) | **Seal check per contact:** a grasp is only considered if the cup can seal on the local surface. Dex-Net 3.0 models the cup as springs that deform onto the surface. This pipeline uses a simpler geometric rule: rays from the cup face must all hit the part, the hits must fit a plane within `seal_tol`, and the surface must face the cup. |
+| Dex-Net 3.0 [1] | Phase 1, step 6 (`seal.py`, `hold_margin`) | **Wrench resistance:** can the sealed cups hold the part's weight. Simplified here to a static check with the gripper pointing down: a minimum-norm split of the weight over the sealed cups, against each cup's vacuum force. |
+| Dex-Net 3.0 [1] | Phase 1, step 7 (`build_db.py`) | **Robustness:** grasp quality as the share of perturbed grasps that still succeed. Here only the tool pose is perturbed: 10 copies, ±2 mm, up to 3°. |
+| Dex-Net 1.0 [2] | Phases 1 and 2 | **Grasp database:** grasps computed offline once per object from its 3D model and looked up at run time from the object's pose. Dex-Net 1.0 does this for a two-finger gripper over many objects; here it is one database per part and suction head, tagged by resting pose. |
+
+The rest has no paper behind it and was developed for this pipeline:
+- several cups of different sizes, `min_cups` and vacuum channels;
+- the peel limit for one cup or cups in a line;
+- resting-pose tags and the support-plane check;
+- non-maximum suppression settings;
+- the phase 2 plug-ins (`reach`, `order`) and the local-search fallback.
+
+### Software
+
+| Package | Where it is used |
+|---|---|
+| trimesh | Loading parts (`part.py`), resting poses (`trimesh.poses.compute_stable_poses`), head shapes (`gripper.py`), surface sampling (`build_db.py`), ray casting for the seal check (`seal.py`), the top views in the database pictures (`render.py`). |
+| python-fcl (FCL [3]) | All collision checks against the exact part mesh, the support plane and obstacle boxes (`collide.py`). |
+| embreex (Embree [4]) | Optional. When installed, trimesh casts the seal-check rays with Embree, about 100 times faster. |
+| NumPy | Everywhere. |
+| SciPy | Rotations and quaternions (`poses.py`). |
+| Rtree, NetworkX | Not imported directly. trimesh uses Rtree to cast rays without Embree, and NetworkX for mesh repairs such as fixing face normals. |
+| Matplotlib | Database pictures (`render.py`) and the example's pictures. |
+| PyBullet | Example only (`examples/g2_evs08`): the robot model, IK for the `reach` plug-in, and the simulation validation. |
+| scikit-learn | Example only: splits the part into convex pieces (`MiniBatchKMeans`) for the fast IK collision check in `g2_reach.py`. |
